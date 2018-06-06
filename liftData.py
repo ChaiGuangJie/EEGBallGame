@@ -38,7 +38,7 @@ class LiftData(Data.Dataset):
                     subTrial = []
                     continue
                 trialData.append(subTrial)
-                trialLabel.append(sampleLabel[i])
+                trialLabel.append(-1 if sampleLabel[i] == 0 else 1)
                 subTrial = []
         print("subTrial over!")
         self.train_data = torch.tensor(trialData,dtype = torch.float)#torch.tensor(trialData)

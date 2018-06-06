@@ -5,13 +5,14 @@ from liftData import LiftData
 from bcicivData import bcicivData
 from torch.autograd import Variable
 import matplotlib.pyplot as plt
+import threading
 
 EPOCH = 1               # train the training data n times, to save time, we just train 1 epoch
 OUT_LEN = 1
 BATCH_SIZE = 1
 TIME_STEP =  40          # rnn time step / image height
 INPUT_SIZE = 32#59#         # rnn input size / image width
-HIDDEN_SIZE = 128
+HIDDEN_SIZE = 64
 LR= 0.001
 LR_GRU = 0.001              # learning rate
 LR_linear = 0.001
@@ -30,7 +31,7 @@ class RNN(nn.Module):
         self.rnn = nn.GRU(  #GRUGRU
             input_size=INPUT_SIZE,
             hidden_size=HIDDEN_SIZE,         # rnn hidden unit
-            num_layers=2,           # number of rnn layer
+            num_layers=1,           # number of rnn layer
             batch_first=True,       # input & output will has batch size as 1s dimension. e.g. (batch, time_step, input_size)
         )
 
@@ -47,12 +48,13 @@ class trainEEG():
     def __init__(self):
         self.rnn = RNN()
         self.optimizer = optimizer = torch.optim.Adam(self.rnn.parameters(), lr=LR)   # optimize all cnn parameters#torch.optim.SGD([{"params":self.rnn.rnn.parameters(),'lr':LR_GRU},{"params":self.rnn.out.parameters(),'lr':LR_linear}],momentum=0.9)
-        self.loss_func = nn.MSELoss()#nn.CrossEntropyLoss()
+        self.loss_func = nn.MSELoss(size_average=False)#nn.CrossEntropyLoss()
         self.train_data = LiftData(DataPath)#bcicivData(matPath)
         self.train_loader = torch.utils.data.DataLoader(dataset=self.train_data, batch_size=BATCH_SIZE, shuffle=NEED_SHUFFLE)
         self.test_data = LiftData(DataPath,test=True)#bcicivData(matPath, test=True)
         self.test_x = torch.tensor(self.test_data.test_data)  # Variable(test_data.test_data, volatile=True).type(torch.FloatTensor)
         self.test_y = torch.tensor(self.test_data.test_labels)
+        self.updateLock = threading.Lock()
 
         self.BLOCK = 400
     def testCurrentNN(self, test_x, test_y, epoch,step,loss):
@@ -61,9 +63,22 @@ class trainEEG():
         #pred_y = torch.round(torch.max(test_output, 1)[0])
         pred_y = torch.tensor([-1 if i < 0 else 1 for i in  test_output.view(-1)])
         right_num = torch.sum(pred_y == torch.tensor(test_y,dtype = torch.long))
-        print("right_num", right_num)
+        #print("right_num", right_num)
         accuracy = float(right_num) / len(test_y)
         print('Epoch: ', epoch, 'step:', step, '| train loss: %.4f' % loss.item(), '| test accuracy: %.3f' % accuracy)
+
+    def updateNet(self,netOutput,label):
+        self.updateLock.acquire()
+        self.loss_func(netOutput,label[0])
+        self.updateLock.release()
+
+    def trainOnline(self,eegQueue,label):
+        eegList = []
+        for ts in range(TIME_STEP):
+            eegList.append(eegQueue.get())
+        train_x = torch.tensor(eegList).view(BATCH_SIZE,TIME_STEP,INPUT_SIZE)
+        #TODO 如果需要计算梯度更新权重 必须异步执行 if label==1 不更新网络 只输出结果
+
 
     def train(self):
         #return output [-1,1]
@@ -77,7 +92,7 @@ class trainEEG():
                 b_y = y.view(BATCH_SIZE, -1)  # Variable(y)                               # batch y
 
                 output = self.rnn(b_x)  # rnn output
-                print(output)
+                #print(output)
                 # if abs(output-b_y)>0.5:
                 #     continue
                 loss = self.loss_func(output, b_y)  # cross entropy loss

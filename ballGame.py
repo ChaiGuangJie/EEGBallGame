@@ -98,7 +98,11 @@ class ballGame():
 
         self.strideLock = threading.Lock()
         self.stopRecvLock = threading.Lock()
+        # self.labelLock = threading.Lock()
         self.keepOn = False
+        self.label = 1
+        self.stride = 0
+        self.stopRecvData = True
         #self.trans = EEGClient.scanTransport(remoteHost, remotePort)
 
     def write(self, msg="ball game"):
@@ -122,12 +126,41 @@ class ballGame():
         #print('setBlank')
 
     def setTarget(self):
-        r = random.randint(0,1)
+        r = random.randint(0, 1)
+        self.label = -1 if r == 0 else 1
+
         self.rightArea.update(r)
         self.leftArea.update(1-r)
         #print('setTarget')
 
-    def run(self, stride, stopRecvData):
+    def getRecvData(self):
+        self.stopRecvLock.acquire()
+        recvData = self.stopRecvData
+        self.stopRecvLock.release()
+        return recvData
+
+    def stopRecv(self):
+        self.stopRecvLock.acquire()
+        self.stopRecvData = True
+        self.stopRecvLock.release()
+
+    def starRecv(self):
+        self.stopRecvLock.acquire()
+        self.stopRecvData = False
+        self.stopRecvLock.release()
+
+    def setStride(self,stride):
+        self.strideLock.acquire()
+        self.stride = stride
+        self.strideLock.release()
+
+    def getStride(self):
+        self.strideLock.acquire()
+        stride = self.stride
+        self.strideLock.release()
+        return  stride
+
+    def run(self):
         self.initGameWindow()
 
         continued = 0
@@ -187,19 +220,14 @@ class ballGame():
                     self.rightBoundary - self.ball.rect.centerx)))
             self.allgroup.clear(self.screen, self.background)
 
-            if stride[0]:  # todo 放到if pause 外面
-
-                self.ball.update(stride[0], 10)  # todo  将random改为stride[0],即网络的输出[-1,1],边界碰撞检测
-                self.strideLock.acquire()
-                stride[0] = 0
-                self.strideLock.release()
+            stride = self.getStride()
+            if stride:
+                self.ball.update(stride, 10)  # todo 边界碰撞检测
+                self.setStride(0)
                 holdOnTime = WT
 
             if self.pause:
-                self.stopRecvLock.acquire()
-                #print('get stopRecvData')
-                stopRecvData[0] = True #todo 每次向队列里放元素时先置空
-                self.stopRecvLock.release()
+                self.stopRecv()
             else:
                 if isTargetTime:
                     targetTime += seconds
@@ -208,6 +236,7 @@ class ballGame():
                         self.setBlank()
                         isTargetTime = False
                 else:
+                    self.label = 0
                     blankTime += seconds
                     if blankTime > BT:
                         blankTime = 0
@@ -218,9 +247,7 @@ class ballGame():
                 holdOnTime -= seconds
                 #print(holdOnTime)
                 if holdOnTime <= 0:
-                    self.stopRecvLock.acquire()
-                    stopRecvData[0] = False
-                    self.stopRecvLock.release()
+                    self.starRecv() #观察期结束，开始接收数据
 
 
             #print(continued) #todo 保存模型时连训练时长一起保存？
@@ -236,23 +263,21 @@ if __name__ == '__main__':
 
     game = ballGame()
 
-    def produceStride(stride,stopRecvData):
+    def produceStride(recvData,setStride):
         looptimes = 20000
         while looptimes > 0:
-            if not stopRecvData[0]:
-                game.strideLock.acquire()
-                stride[0] = random.randint(-1, 1)
-                game.strideLock.release()
+            if not recvData():
+                setStride(random.randint(-1, 1))
                 looptimes = looptimes - 1
                 time.sleep(0.1)
 
 
 
-    stopRecvData = [True]
-    stride = [random.uniform(-1, 1)]
+    # stopRecvData = [True]
+    # stride = [random.uniform(-1, 1)]
 
-    tnet = threading.Thread(target=produceStride,args=(stride,stopRecvData))
+    tnet = threading.Thread(target=produceStride,args=(game.getRecvData,game.setStride,))
 
     tnet.start()
-    game.run(stride,stopRecvData)
+    game.run()
     #tnet.join()

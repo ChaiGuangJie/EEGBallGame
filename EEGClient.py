@@ -172,6 +172,7 @@ class scanTransport():
                 # print(unpackData[:100])
             elif header.request == headerPara.req_32bitRawData.value:
                 dataLen = int(header.bSize/4)
+                #todo 判断标志位stopRecvData 每次装Q之前先清空？
             # print(bufferData)
             # print(type(bufferData))
             print('dataLen:',dataLen)
