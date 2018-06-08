@@ -8,12 +8,17 @@ os.environ['SDL_VIDEO_CENTERED'] = '1'  # 窗口中央显示
 #####################################
 TT = 3  #target time limit (s)
 BT = 1  #blank time limit  (s)
-WT = 0.1  #watch ball time (s)
+WT = 0#0.1  #watch ball time (s)
+SRD = 200 #stride scale
 ########################################
+A = 200 #比SRD略大即可
 
+########################################
 class Ball(pygame.sprite.Sprite):
     image = pygame.image.load("ball.png")
     image.set_colorkey((0, 0, 0))
+    grayImage = pygame.image.load("gray_ball.png")
+    grayImage.set_colorkey((0,0,0))
     #image = image.convert_alpha()
     #centerPos = (SCREENWIDTH/2,SCREENHEIGHT/2)
 
@@ -21,16 +26,17 @@ class Ball(pygame.sprite.Sprite):
         # 获取系统参数如屏幕
         pygame.sprite.Sprite.__init__(self, self.groups)
         self.pos = startpos
-        self.image = Ball.image.convert_alpha()
+        self.image = Ball.grayImage.convert_alpha()
         self.rect = self.image.get_rect()
         self.rect.center = self.pos
 
-    def update(self, direction, stride=1):
+    def update(self, direction, stride = 1):
         '''
         direction:-1到1之间的参数
         stride:小球一次运动的步长
         '''
         self.rect.centerx += direction * stride
+        print('update stride:',direction * stride)
 
     def retart(self):
         self.rect.center = self.pos
@@ -81,7 +87,7 @@ class ballGame():
         self.clock = pygame.time.Clock()  # create pygame clock object
         self.mainloop = True
         self.FPS = 60  # desired max. framerate in frames per second.
-        self.pause = True
+        self.pause = True #todo 实验时开启
 
         self.ballgroup = pygame.sprite.Group()
         self.allgroup = pygame.sprite.Group()
@@ -89,6 +95,7 @@ class ballGame():
         TargetArea.groups = self.allgroup
 
         self.ball = Ball((self.CENTER_X, self.CENTER_Y))
+        self.normalBall = False #灰色 有颜色为True
 
         self.leftBoundary = self.CENTER_X - self.INTERVAL - TargetArea.areaWidth / 2
         self.rightBoundary = self.CENTER_X + self.INTERVAL - TargetArea.areaWidth / 2
@@ -98,11 +105,18 @@ class ballGame():
 
         self.strideLock = threading.Lock()
         self.stopRecvLock = threading.Lock()
-        # self.labelLock = threading.Lock()
+        self.labelLock = threading.Lock()
         self.keepOn = False
-        self.label = 1
+        self.label = 0
         self.stride = 0
+        self.returnStride = False
         self.stopRecvData = True
+
+        self.T = 1.0
+        self.vt = 0
+        self.A = 0
+        self.offset = 0
+        self.continued = 0
         #self.trans = EEGClient.scanTransport(remoteHost, remotePort)
 
     def write(self, msg="ball game"):
@@ -127,16 +141,28 @@ class ballGame():
 
     def setTarget(self):
         r = random.randint(0, 1)
-        self.label = -1 if r == 0 else 1
+
+        self.setLabel(-1 if r == 0 else 1)
 
         self.rightArea.update(r)
         self.leftArea.update(1-r)
-        #print('setTarget')
 
-    def getRecvData(self):
-        self.stopRecvLock.acquire()
+    def setLabel(self,label):
+        #self.labelLock.acquire()
+        self.label = label
+        #print('setLabel',label)
+        #self.labelLock.release()
+
+    def getLabel(self):
+        #self.labelLock.acquire()
+        label = self.label
+        #self.labelLock.release()
+        return label
+
+    def getStopRecv(self):
+        #self.stopRecvLock.acquire()
         recvData = self.stopRecvData
-        self.stopRecvLock.release()
+        #self.stopRecvLock.release()
         return recvData
 
     def stopRecv(self):
@@ -152,18 +178,46 @@ class ballGame():
     def setStride(self,stride):
         self.strideLock.acquire()
         self.stride = stride
+        self.returnStride = True
+        print('setStride')
+        self.strideLock.release()
+
+    def clearStride(self):
+        self.strideLock.acquire()
+        self.stride = 0
+        self.returnStride = False
         self.strideLock.release()
 
     def getStride(self):
-        self.strideLock.acquire()
+        #self.strideLock.acquire()
         stride = self.stride
-        self.strideLock.release()
+        #self.strideLock.release()
         return  stride
 
+    def getOffsetDis(self,dt):
+        print('self.vt:', self.vt)
+        print('self.A:', self.A)
+        s = self.vt*dt
+        print('s:', s)
+        lastVt = self.vt
+        self.vt = self.vt + self.A*dt
+
+        if lastVt*self.vt<0:
+            self.vt = 0
+            self.A = 0
+
+        # if self.A * s >= 0: #异号 小球开始反向运动
+        #     self.vt = 0
+        #     self.A = 0
+        return s
+
+    def collisionDetect(self):
+        if self.ball.rect.centerx > self.rightArea.rect.centerx or self.ball.rect.centerx<self.leftArea.rect.centerx:
+            pass
     def run(self):
         self.initGameWindow()
 
-        continued = 0
+        #continued = 0
         isTargetTime = True
         targetTime = 0
         blankTime = 0
@@ -174,7 +228,7 @@ class ballGame():
             # milliseconds passed since last frame
             milliseconds = self.clock.tick(self.FPS)
             seconds = milliseconds / 1000.0  # seconds passed since last frame
-            continued += seconds
+            self.continued += seconds
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.mainloop = False  # pygame window closed by user
@@ -182,11 +236,13 @@ class ballGame():
                     if event.key == pygame.K_ESCAPE:
                         self.mainloop = False  # user pressed ESC
                     elif event.key == pygame.K_LEFT:
-                        self.ball.update(-1, 30)
+                        self.setStride(-0.1)
                     elif event.key == pygame.K_RIGHT:
-                        self.ball.update(1, 30)
+                        self.setStride(0.1)
                     elif event.key == pygame.K_SPACE:
                         self.pause = not self.pause
+                        if not self.pause:#继续
+                            self.starRecv()
                     elif event.key == pygame.K_s and pygame.key.get_mods() & pygame.KMOD_CTRL:
                         filename = asksaveasfilename(
                             initialdir="/",
@@ -219,24 +275,54 @@ class ballGame():
                     self.ball.rect.centerx - self.leftBoundary), abs(
                     self.rightBoundary - self.ball.rect.centerx)))
             self.allgroup.clear(self.screen, self.background)
+            print(self.label)
+            # if self.normalBall == True:
+            #     self.normalBall = False
+            #     self.ball.image = Ball.grayImage.convert_alpha()
 
-            stride = self.getStride()
-            if stride:
-                self.ball.update(stride, 10)  # todo 边界碰撞检测
-                self.setStride(0)
-                holdOnTime = WT
+            if self.returnStride:
+                ###################################
+                # self.ball.image = Ball.image.convert_alpha()
+                # self.normalBall = True
+                if self.stride:
+                    self.ball.update(self.stride,40)
+                ###################################
+                '''
+                if self.stride:
+                    self.A = -2 * self.stride #-A if self.stride > 0 else A
+                    self.vt = - self.A #self.stride * SRD / self.T + (1 / 2.0) * self.A * self.T
+                    #print('self.vt:', self.vt)
+                    # self.ball.update(self.getStride(), SRD)  #
+                    # holdOnTime = WT
+                else:
+                    self.vt = 0
+                    self.A = 0
+                '''
+                self.clearStride()
+                self.starRecv()  # 观察期结束，开始接收数据
+                print('start recv data')
+
+
+            # offset = self.getOffsetDis(seconds)
+            # print('offset:',offset)
+            # self.ball.update(offset)
+            #todo 边界碰撞检测
+
 
             if self.pause:
-                self.stopRecv()
+                if not self.stopRecvData:
+                    self.stopRecv()
             else:
                 if isTargetTime:
+                    #print('isTargetTime')
                     targetTime += seconds
                     if targetTime > TT:
                         targetTime = 0
                         self.setBlank()
                         isTargetTime = False
                 else:
-                    self.label = 0
+                    #print('not TargetTime')
+                    self.setLabel(0)
                     blankTime += seconds
                     if blankTime > BT:
                         blankTime = 0
@@ -244,13 +330,11 @@ class ballGame():
                         self.ball.retart()
                         isTargetTime = True
 
-                holdOnTime -= seconds
+                # holdOnTime -= seconds
                 #print(holdOnTime)
-                if holdOnTime <= 0:
-                    self.starRecv() #观察期结束，开始接收数据
+                # if holdOnTime <= 0:
 
-
-            #print(continued) #todo 保存模型时连训练时长一起保存？
+            #print(seconds) #todo 保存模型时连训练时长一起保存？
 
             self.allgroup.draw(self.screen)
 
@@ -260,24 +344,53 @@ class ballGame():
 
 
 if __name__ == '__main__':
+    from liftData2Classify import trainEEG,TIME_STEP
+    import queue,os
+    import torch
+    import numpy as np
 
     game = ballGame()
+    classifier = trainEEG()
 
-    def produceStride(recvData,setStride):
-        looptimes = 20000
-        while looptimes > 0:
-            if not recvData():
-                setStride(random.randint(-1, 1))
-                looptimes = looptimes - 1
-                time.sleep(0.1)
+    testQueue = queue.Queue()
 
-
+    def produceEEGsignal(testQueue,getStopRecv,stopRecv):
+        while True:
+            if not getStopRecv():#
+                print('begin produce data')
+                if not testQueue.empty():#
+                    #print('queue not empty')
+                    testQueue.queue.clear()
+                for _ in range(TIME_STEP):
+                    row = np.random.randint(-1000,1000,size=64)
+                    testQueue.put(row)
+                #time.sleep(0.3)
+                #print('put in queue')
+                #time.sleep(0.1)
+                stopRecv()
+                print('end produce data')
+    # def produceStride(getStopRecv,setStride):
+    #     looptimes = 20000
+    #     while looptimes > 0:
+    #         if not getStopRecv():
+    #             setStride(random.randint(-1, 1))
+    #             looptimes = looptimes - 1
+    #             time.sleep(0.1)
 
     # stopRecvData = [True]
     # stride = [random.uniform(-1, 1)]
+    trainOnline = threading.Thread(target=classifier.trainOnline,args=(testQueue,game.getLabel,game.setStride))
+    trainOnline.setDaemon(True)
 
-    tnet = threading.Thread(target=produceStride,args=(game.getRecvData,game.setStride,))
+    producer = threading.Thread(target=produceEEGsignal,args=(testQueue,game.getStopRecv,game.stopRecv))
+    producer.setDaemon(True)
 
-    tnet.start()
+    # tnet = threading.Thread(target=produceStride,args=(game.getRecvData,game.setStride))
+    # tnet.setDaemon(True) #设置为后台线程 主线程结束时强制结束
+    # tnet.start()
+    trainOnline.start()
+    producer.start()
+
+    # trainOnline.join()
     game.run()
     #tnet.join()

@@ -6,14 +6,16 @@ from bcicivData import bcicivData
 from torch.autograd import Variable
 import matplotlib.pyplot as plt
 import threading
+import time
 
 EPOCH = 1               # train the training data n times, to save time, we just train 1 epoch
 OUT_LEN = 1
 BATCH_SIZE = 1
-TIME_STEP =  40          # rnn time step / image height
-INPUT_SIZE = 32#59#         # rnn input size / image width
+NUM_LAYERS = 1
+TIME_STEP = 40          # rnn time step / image height
+INPUT_SIZE = 64  # 32#59#         # rnn input size / image width
 HIDDEN_SIZE = 64
-LR= 0.001
+LR = 0.001
 LR_GRU = 0.001              # learning rate
 LR_linear = 0.001
 DOWNLOAD_MNIST = False   # set to True if haven't download the data
@@ -21,42 +23,56 @@ NEED_SHUFFLE = True
 
 DataPath = "D:/学习资料/data/Grasp-and-lift-EEG-challenge/train/train/subj1.mat"
 matPath = "D://学习资料//data//BCICIV_1_mat//BCICIV_calib_ds1a.mat"
-
-
+cuda = torch.device('cuda')
 
 class RNN(nn.Module):
     def __init__(self):
         super(RNN, self).__init__()
 
-        self.rnn = nn.GRU(  #GRUGRU
+        self._rnn = nn.GRU(  # GRU
             input_size=INPUT_SIZE,
             hidden_size=HIDDEN_SIZE,         # rnn hidden unit
-            num_layers=1,           # number of rnn layer
-            batch_first=True,       # input & output will has batch size as 1s dimension. e.g. (batch, time_step, input_size)
-        )
+            num_layers=NUM_LAYERS,           # number of rnn layer
+            batch_first=True,
+            # input & output will has batch size as 1s dimension. e.g. (batch,
+            # time_step, input_size)
+        ).cuda()
 
-        self.out = nn.Linear(HIDDEN_SIZE, OUT_LEN)
+        self.out = nn.Linear(HIDDEN_SIZE, OUT_LEN).cuda()
 
     def forward(self, x):
-        r_out, h = self.rnn(x, None)  # None represents zero initial hidden state
-
+        # None represents zero initial hidden state
+        t1 = time.time()
+        r_out, h = self._rnn(x, torch.zeros(NUM_LAYERS,BATCH_SIZE,HIDDEN_SIZE).cuda())#None
+        t2 = time.time()
+        print('t2-t1:', t2 - t1)
         # out = nn.functional.sigmoid(self.out(r_out[:, -1, :]))
-        out = nn.functional.tanh(self.out(r_out[:, -1, :]))
+        out = nn.functional.tanh(self.out(r_out[:, -1, :])).cuda()
+        #t3 = time.time()
+
+        #print('t3-t2:',t3-t2)
         return out
+
 
 class trainEEG():
     def __init__(self):
         self.rnn = RNN()
-        self.optimizer = optimizer = torch.optim.Adam(self.rnn.parameters(), lr=LR)   # optimize all cnn parameters#torch.optim.SGD([{"params":self.rnn.rnn.parameters(),'lr':LR_GRU},{"params":self.rnn.out.parameters(),'lr':LR_linear}],momentum=0.9)
-        self.loss_func = nn.MSELoss(size_average=False)#nn.CrossEntropyLoss()
+        # optimize all cnn
+        # parameters#torch.optim.SGD([{"params":self.rnn.rnn.parameters(),'lr':LR_GRU},{"params":self.rnn.out.parameters(),'lr':LR_linear}],momentum=0.9)
+        self.optimizer = torch.optim.Adam(self.rnn.parameters(), lr=LR)
+        self.loss_func = nn.MSELoss(
+            size_average=False).cuda()  # nn.CrossEntropyLoss()
+        '''
         self.train_data = LiftData(DataPath)#bcicivData(matPath)
         self.train_loader = torch.utils.data.DataLoader(dataset=self.train_data, batch_size=BATCH_SIZE, shuffle=NEED_SHUFFLE)
         self.test_data = LiftData(DataPath,test=True)#bcicivData(matPath, test=True)
         self.test_x = torch.tensor(self.test_data.test_data)  # Variable(test_data.test_data, volatile=True).type(torch.FloatTensor)
         self.test_y = torch.tensor(self.test_data.test_labels)
+        '''
         self.updateLock = threading.Lock()
-
+        self.output = 0
         self.BLOCK = 400
+    '''
     def testCurrentNN(self, test_x, test_y, epoch,step,loss):
         test_output = self.rnn(test_x)  # (samples, time_step, input_size)
         # pred_y = torch.max(test_output, 1)[1].data.numpy().squeeze()
@@ -66,20 +82,58 @@ class trainEEG():
         #print("right_num", right_num)
         accuracy = float(right_num) / len(test_y)
         print('Epoch: ', epoch, 'step:', step, '| train loss: %.4f' % loss.item(), '| test accuracy: %.3f' % accuracy)
+    '''
 
-    def updateNet(self,netOutput,label):
-        self.updateLock.acquire()
-        self.loss_func(netOutput,label[0])
-        self.updateLock.release()
+    def updateNet(self, netOutput, label):
+        #self.updateLock.acquire()
+        loss = self.loss_func(netOutput, label)
+        self.optimizer.zero_grad()  # clear gradients for this training step
+        loss.backward()  # backpropagation, compute gradients
+        self.optimizer.step()  # apply gradients
+        #self.updateLock.release()
 
-    def trainOnline(self,eegQueue,label):
+    def _testProducer(self):
+        import numpy as np
         eegList = []
-        for ts in range(TIME_STEP):
-            eegList.append(eegQueue.get())
-        train_x = torch.tensor(eegList).view(BATCH_SIZE,TIME_STEP,INPUT_SIZE)
-        #TODO 如果需要计算梯度更新权重 必须异步执行 if label==1 不更新网络 只输出结果
+        for _ in range(40):
+            row = np.random.rand(64) * 1000
+            eegList.append(row)
+        return eegList
+    def trainOnline(self, eegQueue, getlabel, setStride):  # todo 启动时设置为后台线程 todo 保存模型时会有问题
+
+        while True:
+            eegList = []
+            print('classify thread:begin get data from queue')
+            for ts in range(TIME_STEP):
+                eegList.append(eegQueue.get())
+            print('classify thread:end get data from queue')
+            train_x = torch.tensor(eegList, dtype=torch.float).cuda().view(
+                BATCH_SIZE, TIME_STEP, INPUT_SIZE)
+            #train_x = torch.tensor(self._testProducer(), dtype=torch.float).view(BATCH_SIZE, TIME_STEP, INPUT_SIZE)
+            # TODO 如果需要计算梯度更新权重 必须异步执行
+
+            before = time.time()
+            self.output = self.rnn(train_x).squeeze()
+            #middle = time.time()
+            #print('middle time :', middle - before)
+            print('output:',self.output)
+            # todo update game.stride
+            setStride(self.output.item())
+            label = getlabel() #todo 这里会阻塞线程，使forward过程变慢
+            print('label',label)
+            if label:  # label==0 不更新网络 只输出结果
+                if label * self.output > 0:  # 只有两者同号才更新网络
+                    # todo 比较这种线程的费时与直接更新相比如何
+                    # updateNet = threading.Thread(target=self.updateNet,args=(self.output,label))
+                    # updateNet.start()
+                    self.updateNet(
+                        self.output, torch.tensor(label, dtype=torch.float).cuda())
+                    print('updateNet')
+            after = time.time()
+            print('online continued time:',after - before)
 
 
+'''
     def train(self):
         #return output [-1,1]
         # for frame in range(TIME_STEP):
@@ -112,6 +166,7 @@ class trainEEG():
                     plt.figure()
                     plt.plot(all_loss)
                     plt.show()
+'''
 
 if __name__ == '__main__':
     eegTrain = trainEEG()
