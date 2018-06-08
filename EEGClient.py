@@ -1,7 +1,8 @@
 import socket
 import struct,queue
 from enum import Enum
-import time
+import numpy as np
+import threading
 # remote = ('127.0.0.1',8888) #根据服务器设置
 #
 # s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -79,7 +80,7 @@ class acqHeader(acqMessage):
 
 
 class scanTransport():
-    def __init__(self,host,port):
+    def __init__(self,host,port,qMaxSize = 0):
         self.s = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
 
         self.host = host
@@ -90,7 +91,11 @@ class scanTransport():
         self.otherSideDown = False
         self.blocksize = 4096
         self.maxRecvSize = 10240
-        self.eegQueue = queue.Queue()  # todo 设置超时选项等
+        self.eegQueue = queue.Queue(qMaxSize)  # todo 设置超时选项等
+        self.inRecvCycle = False
+        self.frameSize = 40
+        self.channelCount = 64
+
 
     def sendEx(self,header,bufferData):
         if not bufferData:
@@ -129,7 +134,6 @@ class scanTransport():
             logSave('连接出错')
             logSave(e)
             return False
-        #todo initVars
         logSave('连接成功')
         # self.sendCommand(headerPara.code_clientCtrl.value,headerPara.req_EDFHeader.value)
         # logSave('发送命令成功')
@@ -138,6 +142,9 @@ class scanTransport():
     def stop(self):
         self.disconnect()
         return True
+
+    def startRecvedEEGData(self):
+        self.sendCommand(headerPara.code_clientCtrl.value, headerPara.req_startSendingData.value)
 
     def processCtrlMsg(self, header, bufferData):
         logSave('process ctrl msg!')
@@ -155,7 +162,25 @@ class scanTransport():
         logSave('finish process ctrl msg')
         return True
 
-    def processDataMsg(self, header, bufferData):
+
+    def downSample(self,rawDataRows,outPerPackage = 4): #一轮输出四个点，相当于降采样到100HZ
+        dataList = []
+        left = 0
+        right = self.channelCount
+        for _ in range(self.frameSize):
+            dataList.append(rawDataRows[left:right])
+            left = right + 1
+            right =left + self.channelCount
+        dataArray = np.array(dataList)
+        arrayList = np.split(dataArray,outPerPackage,axis=0)
+        outList = []
+        for r in arrayList:
+            outList.append(np.mean(list(r),axis=0))
+        return outList
+
+
+
+    def processDataMsg(self, header, bufferData,getStopRecv,stopRecv,TIME_STEP):
         logSave('process data msg')
         if header.code == headerPara.code_info.value:
             if header.request == headerPara.req_EDFHeader.value:
@@ -172,7 +197,19 @@ class scanTransport():
                 # print(unpackData[:100])
             elif header.request == headerPara.req_32bitRawData.value:
                 dataLen = int(header.bSize/4)
-                #todo 判断标志位stopRecvData 每次装Q之前先清空？
+                if not getStopRecv():
+                    if self.inRecvCycle == False:
+                        self.eegQueue.queue.clear()
+                        self.inRecvCycle = True
+                    for row in self.downSample(bufferData):
+                        if not self.eegQueue.full():
+                            self.eegQueue.put(row)
+                        else:
+                            print('received Data!')
+                            stopRecv()
+                            self.inRecvCycle = False
+                            break
+
             # print(bufferData)
             # print(type(bufferData))
             print('dataLen:',dataLen)
@@ -185,7 +222,7 @@ class scanTransport():
         logSave('finish processDataMsg')
         return True
 
-    def recvData(self):
+    def recvData(self,getStopRecv,stopRecv):
         self.transportActive = True
         logSave('开始接收数据')
         while self.transportActive:#一次循环接收一个数据包(stream packet)
@@ -225,7 +262,7 @@ class scanTransport():
                 if header.IsCtrlPacket():
                     self.processCtrlMsg(header, b''.join(bufferData))
                 elif header.IsDataPacket():
-                    self.processDataMsg(header, b''.join(bufferData))
+                    self.processDataMsg(header, b''.join(bufferData),getStopRecv,stopRecv)
             else:
                 logSave('bufferHeader 为空')
                 break
@@ -268,12 +305,14 @@ class scanTransport():
 
 
 if __name__ == '__main__':
+    '''
     import threading
+    from ballGame import ballGame
     try:
-
+        game = ballGame()
         trans = scanTransport('159.226.19.197',4000)
         trans.start()
-        recv = threading.Thread(target=trans.recvData,name='recvData')
+        recv = threading.Thread(target=trans.recvData,name='recvData',args=(game.getStopRecv,game.stopRecv))
         send = threading.Thread(target=trans.selectCommand,name='sendCmd')
 
         send.start()
@@ -286,3 +325,14 @@ if __name__ == '__main__':
             trans.disconnect()
         print('finally')
     # selectCommand()
+    '''
+    trans = scanTransport('159.226.19.197', 4000 , qMaxSize = 50) #50个点一个block
+    #test = [[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4],[1,2,3,4]]
+    # t = []
+    # for i in range(40):
+    #     t.append([1]*trans.channelCount)
+    t = []
+    for i in range(40*65):
+        t.append(i)
+    o = trans.downSample(t)
+    print(o)
