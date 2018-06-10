@@ -12,7 +12,7 @@ EPOCH = 1               # train the training data n times, to save time, we just
 OUT_LEN = 1
 BATCH_SIZE = 1
 NUM_LAYERS = 1
-TIME_STEP = 40          # rnn time step / image height
+TIME_STEP = 50#40          # rnn time step / image height
 INPUT_SIZE = 64  # 32#59#         # rnn input size / image width
 HIDDEN_SIZE = 64
 LR = 0.001
@@ -99,14 +99,23 @@ class trainEEG():
             row = np.random.rand(64) * 1000
             eegList.append(row)
         return eegList
-    def trainOnline(self, eegQueue, getlabel, setStride):  # todo 启动时设置为后台线程 todo 保存模型时会有问题
+
+    def saveModel(self):
+        pass
+    def loadModel(self):
+        pass
+
+    def trainOnline(self, eegQueue, getlabel, setStride,stopRecv):  # todo 启动时设置为后台线程 todo 保存模型时会有问题
 
         while True:
             eegList = []
             print('classify thread:begin get data from queue')
             for ts in range(TIME_STEP):
                 eegList.append(eegQueue.get())
-            print('classify thread:end get data from queue')
+            #########################
+            stopRecv()
+            # eegQueue.queue.clear()
+            ###########################
             train_x = torch.tensor(eegList, dtype=torch.float).cuda().view(
                 BATCH_SIZE, TIME_STEP, INPUT_SIZE)
             #train_x = torch.tensor(self._testProducer(), dtype=torch.float).view(BATCH_SIZE, TIME_STEP, INPUT_SIZE)

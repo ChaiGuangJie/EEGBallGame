@@ -22,7 +22,7 @@ A = 200  # 比SRD略大即可
 class Ball(pygame.sprite.Sprite):
     image = pygame.image.load("ball.png")
     image.set_colorkey((0, 0, 0))
-    grayImage = pygame.image.load("gray_ball.png")
+    grayImage = pygame.image.load("ball.png")
     grayImage.set_colorkey((0, 0, 0))
     #image = image.convert_alpha()
     #centerPos = (SCREENWIDTH/2,SCREENHEIGHT/2)
@@ -175,7 +175,7 @@ class ballGame():
         self.stopRecvData = True
         self.stopRecvLock.release()
 
-    def starRecv(self):
+    def startRecv(self):
         self.stopRecvLock.acquire()
         self.stopRecvData = False
         self.stopRecvLock.release()
@@ -184,7 +184,7 @@ class ballGame():
         self.strideLock.acquire()
         self.stride = stride
         self.returnStride = True
-        print('setStride')
+        #print('setStride')
         self.strideLock.release()
 
     def clearStride(self):
@@ -247,7 +247,7 @@ class ballGame():
                     elif event.key == pygame.K_SPACE:
                         self.pause = not self.pause
                         if not self.pause:  # 继续
-                            self.starRecv()
+                            self.startRecv()
                     elif event.key == pygame.K_s and pygame.key.get_mods() & pygame.KMOD_CTRL:
                         filename = asksaveasfilename(
                             initialdir="/",
@@ -280,7 +280,7 @@ class ballGame():
                     self.ball.rect.centerx - self.leftBoundary), abs(
                     self.rightBoundary - self.ball.rect.centerx)))
             self.allgroup.clear(self.screen, self.background)
-            print(self.label)
+            #print(self.label)
             # if self.normalBall == True:
             #     self.normalBall = False
             #     self.ball.image = Ball.grayImage.convert_alpha()
@@ -304,7 +304,7 @@ class ballGame():
                     self.A = 0
                 '''
                 self.clearStride()
-                self.starRecv()
+                self.startRecv()
                 print('start recv data')
 
             # offset = self.getOffsetDis(seconds)
@@ -356,7 +356,7 @@ if __name__ == '__main__':
 
     game = ballGame()
     classifier = trainEEG()
-    transport = scanTransport('159.226.19.197', 4000 , qMaxSize = 50)
+    transport = scanTransport('159.226.19.2', 4000 , qMaxSize = TIME_STEP)
 
     testQueue = queue.Queue()
 
@@ -387,13 +387,13 @@ if __name__ == '__main__':
     # stride = [random.uniform(-1, 1)]
     trainOnline = threading.Thread(
         target=classifier.trainOnline, args=(
-            testQueue, game.getLabel, game.setStride))
+            transport.eegQueue, game.getLabel, game.setStride,game.stopRecv))
     trainOnline.setDaemon(True)
 
     producer = threading.Thread(
         target=produceEEGsignal,
         args=(
-            testQueue,
+            transport.eegQueue,
             game.getStopRecv,
             game.stopRecv))
     producer.setDaemon(True)
@@ -405,14 +405,14 @@ if __name__ == '__main__':
     # tnet = threading.Thread(target=produceStride,args=(game.getRecvData,game.setStride))
     # tnet.setDaemon(True) #设置为后台线程 主线程结束时强制结束
     # tnet.start()
-    #trainOnline.start()
+    trainOnline.start()
     #producer.start()
     transport.start()
     scanRecvThread.start()
     # todo 发送开始接收EEG数据的命令给服务器端
     transport.startRecvedEEGData()
 
-    trainOnline.join()
+    #trainOnline.join()
     game.run()
     transport.disconnect()
     # tnet.join()

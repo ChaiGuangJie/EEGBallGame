@@ -58,20 +58,20 @@ class acqMessage(object):
 class acqHeader(acqMessage):
     def __init__(self,buffer):
         self.unpackData = struct.unpack('!4sHHI',buffer)
-        logSave('saved header:')
-        logSave(self.unpackData)
+        # logSave('saved header:')
+        # logSave(self.unpackData)
         acqMessage.__init__(self,self.unpackData[0],self.unpackData[1],self.unpackData[2],self.unpackData[3])
 
 
     def IsCtrlPacket(self):
-        logSave('ctrl packet')
+        # logSave('ctrl packet')
         if self.chId == b'CTRL':
             return True
         else:
             return False
 
     def IsDataPacket(self):
-        logSave('data packet')
+        # logSave('data packet')
         if self.chId == b'DATA':
             return True
         else:
@@ -91,8 +91,10 @@ class scanTransport():
         self.otherSideDown = False
         self.blocksize = 4096
         self.maxRecvSize = 10240
-        self.eegQueue = queue.Queue(qMaxSize)  # todo 设置超时选项等
-        self.inRecvCycle = False
+        self.qMaxSize = qMaxSize
+        self.eegQueue = queue.Queue(self.qMaxSize)
+        # self.inRecvCycle = False
+        self.recvIndex = 0
         self.frameSize = 40
         self.channelCount = 64
 
@@ -145,6 +147,7 @@ class scanTransport():
 
     def startRecvedEEGData(self):
         self.sendCommand(headerPara.code_clientCtrl.value, headerPara.req_startSendingData.value)
+        print('发送获取EEG数据请求')
 
     def processCtrlMsg(self, header, bufferData):
         logSave('process ctrl msg!')
@@ -180,7 +183,7 @@ class scanTransport():
 
 
 
-    def processDataMsg(self, header, bufferData,getStopRecv,stopRecv,TIME_STEP):
+    def processDataMsg(self, header, bufferData,getStopRecv,stopRecv):
         logSave('process data msg')
         if header.code == headerPara.code_info.value:
             if header.request == headerPara.req_EDFHeader.value:
@@ -196,30 +199,39 @@ class scanTransport():
                 # unpackData = struct.unpack('!'+ dataLen + 'h',bufferData)
                 # print(unpackData[:100])
             elif header.request == headerPara.req_32bitRawData.value:
+                print('32bitRawData')
                 dataLen = int(header.bSize/4)
                 if not getStopRecv():
-                    if self.inRecvCycle == False:
-                        self.eegQueue.queue.clear()
-                        self.inRecvCycle = True
-                    for row in self.downSample(bufferData):
-                        if not self.eegQueue.full():
+                    print('not stop and begin put in queue!')
+                    if self.recvIndex >= self.qMaxSize:
+                        self.recvIndex = 0
+                        if self.eegQueue.qsize() != 0:
+                            self.eegQueue.queue.clear()
+                    fmt = '!' + str(dataLen) + 'i'
+                    unpackData = struct.unpack(fmt, bufferData)
+                    for row in self.downSample(unpackData):
+                        if not self.eegQueue.full() and self.recvIndex < self.qMaxSize:
                             self.eegQueue.put(row)
-                        else:
-                            print('received Data!')
-                            stopRecv()
-                            self.inRecvCycle = False
-                            break
+                            self.recvIndex += 1
+                            if self.recvIndex >= self.qMaxSize:
+                                break
+                        # else:
+                        #     stopRecv()
+                        #     self.recvIndex = 0
+                        #     print('received Data!......queueSize:', self.eegQueue.qsize())
+                        #     break
 
+            #print('received Data!......queueSize:', self.eegQueue.qsize())
             # print(bufferData)
             # print(type(bufferData))
-            print('dataLen:',dataLen)
-            fmt = '!' + str(dataLen) + 'i'
-            print(fmt)
-            unpackData = struct.unpack(fmt,bufferData)
-            self.eegQueue.put(unpackData)#unpack数据在什么时候组装成网络的输入 主要看哪个环节最不费时，且queue是否阻塞
-            print(unpackData[:100])
+            # print('dataLen:',dataLen)
+            # fmt = '!' + str(dataLen) + 'i'
+            # print(fmt)
+            # unpackData = struct.unpack(fmt,bufferData)
+            # self.eegQueue.put(unpackData)#unpack数据在什么时候组装成网络的输入 主要看哪个环节最不费时，且queue是否阻塞
+            # print(unpackData[:100])
 
-        logSave('finish processDataMsg')
+        # logSave('finish processDataMsg')
         return True
 
     def recvData(self,getStopRecv,stopRecv):
@@ -231,33 +243,33 @@ class scanTransport():
             except ConnectionResetError as e:
                 logSave(e)
                 break
-            logSave('数据头部接收成功')
-            print('bufferHeader:',bufferHeader)
+            # logSave('数据头部接收成功')
+            # print('bufferHeader:',bufferHeader)
             if bufferHeader:
                 header = acqHeader(bufferHeader)
-                logSave('header.bSize:')
-                logSave(header.bSize)
+                # logSave('header.bSize:')
+                # logSave(header.bSize)
                 totalRecved = 0
                 bufferData = []
                 # print(self.s.recv(12))
                 while totalRecved < header.bSize:
                     try:
-                        print('subBuff recv begin')
+                        #print('subBuff recv begin')
                         #self.s.settimeout(1)
                         buffersize = header.bSize - totalRecved if header.bSize - totalRecved < self.maxRecvSize else self.maxRecvSize
-                        print('buffersize:',buffersize)
-                        subBuff = self.s.recv(buffersize)
+                        #print('buffersize:',buffersize)
+                        subBuff = self.s.recv(buffersize) #todo 调整一次接收数据大小
                         if len(subBuff) == 0:
                             break
-                        print('subBuff:',subBuff)
-                        print('len(subBuff):',len(subBuff))
+                        #print('subBuff:',subBuff)
+                        #print('len(subBuff):',len(subBuff))
                     except Exception as e:
                         logSave(e)
                         break
                     bufferData.append(subBuff)
                     totalRecved +=  len(subBuff)
-                    print('totalRecved:',totalRecved)
-                    print('header.bSize:',header.bSize)
+                # print('totalRecved:',totalRecved)
+                # print('header.bSize:',header.bSize)
 
                 if header.IsCtrlPacket():
                     self.processCtrlMsg(header, b''.join(bufferData))
@@ -267,8 +279,8 @@ class scanTransport():
                 logSave('bufferHeader 为空')
                 break
 
-            self.sendCommand(headerPara.code_clientCtrl.value,headerPara.req_stopSendingData.value)
-            self.transportActive = False
+            # self.sendCommand(headerPara.code_clientCtrl.value,headerPara.req_stopSendingData.value)
+            # self.transportActive = False
     def recvDataWithoutHeader(self):
         # while self.transportActive:
         #     block = self.s.recv(self.blocksize)
