@@ -34,6 +34,7 @@ class Ball(pygame.sprite.Sprite):
         self.image = Ball.grayImage.convert_alpha()
         self.rect = self.image.get_rect()
         self.rect.center = self.pos
+        self._lastTime = 0
 
     def update(self, direction, stride=1):
         '''
@@ -42,6 +43,11 @@ class Ball(pygame.sprite.Sprite):
         '''
         self.rect.centerx += direction * stride
         print('update stride:', direction * stride)
+        currentTime = time.time()
+        timeInterval = currentTime - self._lastTime
+        self._lastTime = currentTime
+        print("time interval:",timeInterval)
+
 
     def retart(self):
         self.rect.center = self.pos
@@ -123,6 +129,8 @@ class ballGame():
         self.offset = 0
         self.continued = 0
         #self.trans = EEGClient.scanTransport(remoteHost, remotePort)
+        self.state = "暂停"
+        self.trainState = ""
 
     def write(self, msg="ball game"):
         myfont = pygame.font.SysFont("微软雅黑", 32)
@@ -137,7 +145,7 @@ class ballGame():
         self.background = self.background.convert()  # jpg can not have transparency
         # blit background on screen (overwriting all)
         self.screen.blit(self.background, (0, 0))
-        self.leftArea.update(1)
+        #self.leftArea.update(1)
 
     def setBlank(self):
         self.leftArea.update(False)
@@ -220,11 +228,11 @@ class ballGame():
         if self.ball.rect.centerx > self.rightArea.rect.centerx or self.ball.rect.centerx < self.leftArea.rect.centerx:
             pass
 
-    def run(self):
+    def run(self,saveModel,loadModel):
         self.initGameWindow()
 
         #continued = 0
-        isTargetTime = True
+        isTargetTime = False
         targetTime = 0
         blankTime = 0
         holdOnTime = 0
@@ -241,44 +249,58 @@ class ballGame():
                     if event.key == pygame.K_ESCAPE:
                         self.mainloop = False  # user pressed ESC
                     elif event.key == pygame.K_LEFT:
-                        self.setStride(-0.1)
+                        self.setStride(-1)
                     elif event.key == pygame.K_RIGHT:
-                        self.setStride(0.1)
+                        self.setStride(1)
                     elif event.key == pygame.K_SPACE:
                         self.pause = not self.pause
                         if not self.pause:  # 继续
                             self.startRecv()
+                            self.state = "运行中"
+                        else:
+                            self.state = "暂停"
                     elif event.key == pygame.K_s and pygame.key.get_mods() & pygame.KMOD_CTRL:
                         filename = asksaveasfilename(
                             initialdir="/",
                             title="保存模型",
                             filetypes=(
-                                ("jpeg files",
-                                 "*.jpg"),
+                                ("torch model files",
+                                 "*.tmd"),
                                 ("all files",
                                  "*.*")))
                         print(filename)
-                        # todo save netmodal
+                        if True == saveModel(filename):
+                            self.state = "模型已保存"
+                        else:
+                            self.state = "模型保存失败"
                     elif event.key == pygame.K_o and pygame.key.get_mods() & pygame.KMOD_CTRL:
                         filename = askopenfilename(
                             initialdir="/",
                             title="加载模型",
                             filetypes=(
-                                ("jpeg files",
-                                 "*.jpg"),
+                                ("torch model files",
+                                 "*.tmd"),
                                 ("all files",
                                  "*.*")))
                         print(filename)
-                        # todo load netmodal
+                        if True == loadModel(filename):
+                            self.state = "模型已加载"
+                        else:
+                            self.state = "模型加载失败"
                     elif event.key == pygame.K_r and pygame.key.get_mods() & pygame.KMOD_CTRL:
                         pass  # todo restart
 
-            # todo 可显示模型的保存加载信息状态
-            pygame.display.set_caption(
-                "[FPS]: %.2f distance to left boundary: %i to right boundary: %i" %
-                (self.clock.get_fps(), abs(
-                    self.ball.rect.centerx - self.leftBoundary), abs(
-                    self.rightBoundary - self.ball.rect.centerx)))
+            # 显示模型的运行状态、保存加载等信息
+            if self.getLabel() == 0 or self.pause:
+                self.trainState = "未训练"
+            else:
+                self.trainState = "训练中"
+            pygame.display.set_caption("[FPS]: %.2f  [run state]: %s [train state]: %s" %(self.clock.get_fps(),self.state,self.trainState))
+            # pygame.display.set_caption(
+            #     "[FPS]: %.2f distance to left boundary: %i to right boundary: %i" %
+            #     (self.clock.get_fps(), abs(
+            #         self.ball.rect.centerx - self.leftBoundary), abs(
+            #         self.rightBoundary - self.ball.rect.centerx)))
             self.allgroup.clear(self.screen, self.background)
             #print(self.label)
             # if self.normalBall == True:
@@ -312,7 +334,7 @@ class ballGame():
             # self.ball.update(offset)
             # todo 边界碰撞检测
 
-            if self.pause:
+            if self.pause:#todo 最好在非目标间隔内暂停 不然分类器的训练过程会受干扰
                 if not self.stopRecvData:
                     self.stopRecv()
             else:
@@ -360,21 +382,21 @@ if __name__ == '__main__':
 
     testQueue = queue.Queue()
 
-    def produceEEGsignal(testQueue, getStopRecv, stopRecv):
-        while True:
-            if not getStopRecv():
-                print('begin produce data')
-                if not testQueue.empty():
-                    #print('queue not empty')
-                    testQueue.queue.clear()
-                for _ in range(TIME_STEP):
-                    row = np.random.randint(-1000, 1000, size=64)
-                    testQueue.put(row)
-                # time.sleep(0.3)
-                #print('put in queue')
-                # time.sleep(0.1)
-                stopRecv()
-                print('end produce data')
+    # def produceEEGsignal(testQueue, getStopRecv, stopRecv):
+    #     while True:
+    #         if not getStopRecv():
+    #             print('begin produce data')
+    #             if not testQueue.empty():
+    #                 #print('queue not empty')
+    #                 testQueue.queue.clear()
+    #             for _ in range(TIME_STEP):
+    #                 row = np.random.randint(-1000, 1000, size=64)
+    #                 testQueue.put(row)
+    #             # time.sleep(0.3)
+    #             #print('put in queue')
+    #             # time.sleep(0.1)
+    #             stopRecv()
+    #             print('end produce data')
     # def produceStride(getStopRecv,setStride):
     #     looptimes = 20000
     #     while looptimes > 0:
@@ -390,13 +412,13 @@ if __name__ == '__main__':
             transport.eegQueue, game.getLabel, game.setStride,game.stopRecv))
     trainOnline.setDaemon(True)
 
-    producer = threading.Thread(
-        target=produceEEGsignal,
-        args=(
-            transport.eegQueue,
-            game.getStopRecv,
-            game.stopRecv))
-    producer.setDaemon(True)
+    # producer = threading.Thread(
+    #     target=produceEEGsignal,
+    #     args=(
+    #         transport.eegQueue,
+    #         game.getStopRecv,
+    #         game.stopRecv))
+    # producer.setDaemon(True)
 
     scanRecvThread = threading.Thread(
         target=transport.recvData, args=(
@@ -409,10 +431,10 @@ if __name__ == '__main__':
     #producer.start()
     transport.start()
     scanRecvThread.start()
-    # todo 发送开始接收EEG数据的命令给服务器端
+    # todo 处理网络未连接的异常
     transport.startRecvedEEGData()
 
     #trainOnline.join()
-    game.run()
+    game.run(classifier.saveModel,classifier.loadModel)
     transport.disconnect()
     # tnet.join()

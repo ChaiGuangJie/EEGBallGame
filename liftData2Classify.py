@@ -100,10 +100,21 @@ class trainEEG():
             eegList.append(row)
         return eegList
 
-    def saveModel(self):
-        pass
-    def loadModel(self):
-        pass
+    def saveModel(self,filename):
+        try:
+            torch.save(self.rnn,filename)
+        except Exception as e:
+            print(e)
+            return False
+        return True
+
+    def loadModel(self,filename):
+        try:
+            self.rnn = torch.load(filename)
+        except Exception as e:
+            print(e)
+            return False
+        return True
 
     def trainOnline(self, eegQueue, getlabel, setStride,stopRecv):  # todo 启动时设置为后台线程 todo 保存模型时会有问题
 
