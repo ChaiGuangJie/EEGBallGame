@@ -179,6 +179,7 @@ class scanTransport():
         outList = []
         for r in arrayList:
             outList.append(np.mean(list(r),axis=0))
+        #print(arrayList[0])
         return outList
 
 
@@ -207,11 +208,14 @@ class scanTransport():
                         self.recvIndex = 0
                         if self.eegQueue.qsize() != 0:
                             self.eegQueue.queue.clear()
-                    fmt = '!' + str(dataLen) + 'i'
+                    fmt = '<' + str(dataLen) + 'i'
                     unpackData = struct.unpack(fmt, bufferData)
+                    print(unpackData[:10])
                     for row in self.downSample(unpackData):
                         if not self.eegQueue.full() and self.recvIndex < self.qMaxSize:
-                            self.eegQueue.put(row)
+                            #print('type of row',type(row))
+                            self.eegQueue.put(row/150)
+                            print(row*0.15)
                             self.recvIndex += 1
                             if self.recvIndex >= self.qMaxSize:
                                 break

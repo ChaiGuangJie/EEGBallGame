@@ -378,7 +378,7 @@ if __name__ == '__main__':
 
     game = ballGame()
     classifier = trainEEG()
-    transport = scanTransport('159.226.19.2', 4000 , qMaxSize = TIME_STEP)
+    transport = scanTransport('159.226.19.25', 4000 , qMaxSize = TIME_STEP)
 
     testQueue = queue.Queue()
 
